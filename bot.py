@@ -29,21 +29,56 @@ from telegram.ext import (
 
 load_dotenv()
 
+# هیچ توکن یا رمز واقعی نباید داخل این فایل قرار بگیرد.
+# همه مقادیر حساس فقط از Railway Variables خوانده می‌شوند.
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_IDS = {
-    int(x.strip())
-    for x in os.getenv("ADMIN_IDS", "").split(",")
-    if x.strip().isdigit()
+    int(value.strip())
+    for value in os.getenv("ADMIN_IDS", "").split(",")
+    if value.strip().isdigit()
 }
+
 CONSULTATION_URL = os.getenv(
-    "CONSULTATION_URL", "https://avamohajerat.com/consult/"
+    "CONSULTATION_URL",
+    "https://avamohajerat.com/consult/",
 ).strip()
-DB_PATH = os.getenv("DB_PATH", "data/leads.db").strip()
-CHANNEL_URL = os.getenv("CHANNEL_URL", "https://t.me/avamohajerat").strip()
 
-AGE, EDUCATION, GPA, FIELD, LANGUAGE_TEST, LANGUAGE_LEVEL, GAP, WORK_EXPERIENCE, FUNDS, REFUSAL, PHONE = range(11)
+CHANNEL_URL = os.getenv(
+    "CHANNEL_URL",
+    "https://t.me/avamohajerat",
+).strip()
 
-STATES = [AGE, EDUCATION, GPA, FIELD, LANGUAGE_TEST, LANGUAGE_LEVEL, GAP, WORK_EXPERIENCE, FUNDS, REFUSAL]
+DB_PATH = os.getenv(
+    "DB_PATH",
+    "data/leads_v2.db",
+).strip()
+
+(
+    AGE,
+    EDUCATION,
+    GPA,
+    FIELD,
+    LANGUAGE_TEST,
+    LANGUAGE_LEVEL,
+    GAP,
+    WORK_EXPERIENCE,
+    FUNDS,
+    REFUSAL,
+    PHONE,
+) = range(11)
+
+QUESTION_STATES = [
+    AGE,
+    EDUCATION,
+    GPA,
+    FIELD,
+    LANGUAGE_TEST,
+    LANGUAGE_LEVEL,
+    GAP,
+    WORK_EXPERIENCE,
+    FUNDS,
+    REFUSAL,
+]
 
 QUESTIONS = {
     AGE: (
@@ -142,7 +177,7 @@ STATE_KEYS = {
     REFUSAL: "refusal",
 }
 
-PREFIXES = {
+STATE_PREFIXES = {
     AGE: "age",
     EDUCATION: "education",
     GPA: "gpa",
@@ -155,7 +190,10 @@ PREFIXES = {
     REFUSAL: "refusal",
 }
 
-PREFIX_TO_STATE = {v: k for k, v in PREFIXES.items()}
+PREFIX_TO_STATE = {
+    prefix: state
+    for state, prefix in STATE_PREFIXES.items()
+}
 
 SCORES = {
     AGE: {
@@ -238,26 +276,51 @@ SCORES = {
 }
 
 COUNTRIES = [
-    ("ایتالیا", "🇮🇹", 3),
-    ("فرانسه", "🇫🇷", 2),
-    ("انگلستان", "🇬🇧", 0),
-    ("آلمان", "🇩🇪", -1),
-    ("اتریش", "🇦🇹", -2),
-    ("سوئد", "🇸🇪", -3),
+    {"name": "ایتالیا", "flag": "🇮🇹", "adjustment": 3},
+    {"name": "فرانسه", "flag": "🇫🇷", "adjustment": 2},
+    {"name": "انگلستان", "flag": "🇬🇧", "adjustment": 0},
+    {"name": "آلمان", "flag": "🇩🇪", "adjustment": -1},
+    {"name": "اتریش", "flag": "🇦🇹", "adjustment": -2},
+    {"name": "سوئد", "flag": "🇸🇪", "adjustment": -3},
 ]
 
 
 def db_connect():
-    path = Path(DB_PATH)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    return conn
+    db_file = Path(DB_PATH)
+    db_file.parent.mkdir(parents=True, exist_ok=True)
+
+    connection = sqlite3.connect(db_file)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def add_missing_columns(connection):
+    existing_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(leads)").fetchall()
+    }
+
+    required_columns = {
+        "field": "TEXT",
+        "language_test": "TEXT",
+        "language_level": "TEXT",
+        "work_experience": "TEXT",
+        "overall_score": "INTEGER",
+        "best_country": "TEXT",
+        "best_country_score": "INTEGER",
+        "result_level": "TEXT",
+    }
+
+    for column_name, column_type in required_columns.items():
+        if column_name not in existing_columns:
+            connection.execute(
+                f"ALTER TABLE leads ADD COLUMN {column_name} {column_type}"
+            )
 
 
 def init_db():
-    with db_connect() as conn:
-        conn.execute(
+    with db_connect() as connection:
+        connection.execute(
             """
             CREATE TABLE IF NOT EXISTS leads (
                 telegram_id INTEGER PRIMARY KEY,
@@ -284,25 +347,10 @@ def init_db():
             )
             """
         )
-        existing_columns = {
-            row["name"]
-            for row in conn.execute("PRAGMA table_info(leads)").fetchall()
-        }
 
-        required_columns = {
-            "field": "TEXT",
-            "language_test": "TEXT",
-            "language_level": "TEXT",
-            "work_experience": "TEXT",
-        }
+        add_missing_columns(connection)
 
-        for column_name, column_type in required_columns.items():
-            if column_name not in existing_columns:
-                conn.execute(
-                    f"ALTER TABLE leads ADD COLUMN {column_name} {column_type}"
-                )
-
-        conn.execute(
+        connection.execute(
             """
             CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -312,38 +360,67 @@ def init_db():
             )
             """
         )
-        conn.commit()
+
+        connection.commit()
 
 
-def record_event(user_id, event_name):
-    with db_connect() as conn:
-        conn.execute(
-            "INSERT INTO events (telegram_id, event_name, created_at) VALUES (?, ?, ?)",
-            (user_id, event_name, datetime.now(timezone.utc).isoformat()),
+def record_event(telegram_id, event_name):
+    with db_connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO events (
+                telegram_id,
+                event_name,
+                created_at
+            )
+            VALUES (?, ?, ?)
+            """,
+            (
+                telegram_id,
+                event_name,
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
-        conn.commit()
+        connection.commit()
 
 
-def upsert_user(user, referred_by=None):
+def upsert_start_user(user, referred_by=None):
     now = datetime.now(timezone.utc).isoformat()
-    with db_connect() as conn:
-        row = conn.execute(
-            "SELECT telegram_id, referred_by FROM leads WHERE telegram_id = ?",
+
+    with db_connect() as connection:
+        existing = connection.execute(
+            """
+            SELECT telegram_id, referred_by
+            FROM leads
+            WHERE telegram_id = ?
+            """,
             (user.id,),
         ).fetchone()
 
-        if row:
-            if referred_by and not row["referred_by"] and referred_by != user.id:
-                conn.execute(
-                    "UPDATE leads SET referred_by = ?, updated_at = ? WHERE telegram_id = ?",
+        if existing:
+            if (
+                referred_by
+                and not existing["referred_by"]
+                and referred_by != user.id
+            ):
+                connection.execute(
+                    """
+                    UPDATE leads
+                    SET referred_by = ?, updated_at = ?
+                    WHERE telegram_id = ?
+                    """,
                     (referred_by, now, user.id),
                 )
         else:
-            conn.execute(
+            connection.execute(
                 """
                 INSERT INTO leads (
-                    telegram_id, username, full_name,
-                    referred_by, created_at, updated_at
+                    telegram_id,
+                    username,
+                    full_name,
+                    referred_by,
+                    created_at,
+                    updated_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
@@ -356,40 +433,68 @@ def upsert_user(user, referred_by=None):
                     now,
                 ),
             )
-        conn.commit()
+
+        connection.commit()
 
 
-def save_result(user, data, score, best_country, best_score, level):
+def save_result(
+    user,
+    data,
+    overall_score,
+    best_country,
+    best_country_score,
+    result_level,
+):
     now = datetime.now(timezone.utc).isoformat()
-    with db_connect() as conn:
-        conn.execute(
+
+    with db_connect() as connection:
+        connection.execute(
             """
             INSERT INTO leads (
-                telegram_id, username, full_name, phone,
-                age, education, gpa, field, language_test, language_level,
-                study_gap, work_experience, funds, refusal, overall_score, best_country,
-                best_country_score, result_level, created_at, updated_at
+                telegram_id,
+                username,
+                full_name,
+                phone,
+                age,
+                education,
+                gpa,
+                field,
+                language_test,
+                language_level,
+                study_gap,
+                work_experience,
+                funds,
+                refusal,
+                overall_score,
+                best_country,
+                best_country_score,
+                result_level,
+                created_at,
+                updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
             ON CONFLICT(telegram_id) DO UPDATE SET
-                username=excluded.username,
-                full_name=excluded.full_name,
-                phone=excluded.phone,
-                age=excluded.age,
-                education=excluded.education,
-                gpa=excluded.gpa,
-                field=excluded.field,
-                language_test=excluded.language_test,
-                language_level=excluded.language_level,
-                study_gap=excluded.study_gap,
-                work_experience=excluded.work_experience,
-                funds=excluded.funds,
-                refusal=excluded.refusal,
-                overall_score=excluded.overall_score,
-                best_country=excluded.best_country,
-                best_country_score=excluded.best_country_score,
-                result_level=excluded.result_level,
-                updated_at=excluded.updated_at
+                username = excluded.username,
+                full_name = excluded.full_name,
+                phone = excluded.phone,
+                age = excluded.age,
+                education = excluded.education,
+                gpa = excluded.gpa,
+                field = excluded.field,
+                language_test = excluded.language_test,
+                language_level = excluded.language_level,
+                study_gap = excluded.study_gap,
+                work_experience = excluded.work_experience,
+                funds = excluded.funds,
+                refusal = excluded.refusal,
+                overall_score = excluded.overall_score,
+                best_country = excluded.best_country,
+                best_country_score = excluded.best_country_score,
+                result_level = excluded.result_level,
+                updated_at = excluded.updated_at
             """,
             (
                 user.id,
@@ -406,69 +511,120 @@ def save_result(user, data, score, best_country, best_score, level):
                 data.get("work_experience", ""),
                 data.get("funds", ""),
                 data.get("refusal", ""),
-                score,
+                overall_score,
                 best_country,
-                best_score,
-                level,
+                best_country_score,
+                result_level,
                 now,
                 now,
             ),
         )
-        conn.commit()
+
+        connection.commit()
 
 
-def progress(state):
-    index = STATES.index(state) + 1
-    total = len(STATES)
-    percent = round((index - 1) / total * 100)
-    blocks = round(percent / 10)
-    bar = "█" * blocks + "░" * (10 - blocks)
-    return f"مرحله {index} از {total}\n{bar} {percent}%\n\n"
+def progress_text(state):
+    current_step = QUESTION_STATES.index(state) + 1
+    total_steps = len(QUESTION_STATES)
+
+    completed_percent = round(
+        (current_step - 1) / total_steps * 100
+    )
+
+    filled_blocks = round(completed_percent / 10)
+    bar = (
+        "█" * filled_blocks
+        + "░" * (10 - filled_blocks)
+    )
+
+    return (
+        f"مرحله {current_step} از {total_steps}\n"
+        f"{bar} {completed_percent}%\n\n"
+    )
 
 
-def keyboard_for(state):
+def question_keyboard(state):
     _, options = QUESTIONS[state]
-    prefix = PREFIXES[state]
+    prefix = STATE_PREFIXES[state]
+
     rows = [
-        [InlineKeyboardButton(option, callback_data=f"answer|{prefix}|{i}")]
-        for i, option in enumerate(options)
+        [
+            InlineKeyboardButton(
+                option,
+                callback_data=f"answer|{prefix}|{index}",
+            )
+        ]
+        for index, option in enumerate(options)
     ]
 
     if state != AGE:
         rows.append(
-            [InlineKeyboardButton("⬅️ بازگشت", callback_data=f"back|{prefix}")]
+            [
+                InlineKeyboardButton(
+                    "⬅️ بازگشت",
+                    callback_data=f"back|{prefix}",
+                )
+            ]
         )
 
     return InlineKeyboardMarkup(rows)
 
 
 def question_message(state):
-    return progress(state) + QUESTIONS[state][0]
+    question, _ = QUESTIONS[state]
+    return progress_text(state) + question
 
 
-def base_score(data):
-    total = 0
-    for state, key in STATE_KEYS.items():
-        total += SCORES[state].get(data.get(key, ""), 0)
-    return max(0, min(100, total))
+def calculate_base_score(data):
+    score = 0
+
+    for state, data_key in STATE_KEYS.items():
+        selected_answer = data.get(data_key, "")
+        score += SCORES[state].get(selected_answer, 0)
+
+    return max(0, min(100, score))
 
 
-def country_scores(data):
-    score = base_score(data)
-    results = [
-        {"name": name, "flag": flag, "score": max(0, min(100, score + adjustment))}
-        for name, flag, adjustment in COUNTRIES
-    ]
-    return sorted(results, key=lambda x: x["score"], reverse=True)
+def calculate_country_scores(data):
+    base_score = calculate_base_score(data)
+
+    results = []
+
+    for country in COUNTRIES:
+        adjusted_score = max(
+            0,
+            min(
+                100,
+                base_score + country["adjustment"],
+            ),
+        )
+
+        results.append(
+            {
+                "name": country["name"],
+                "flag": country["flag"],
+                "score": adjusted_score,
+            }
+        )
+
+    results.sort(
+        key=lambda item: item["score"],
+        reverse=True,
+    )
+
+    return results
 
 
 def score_level(score):
     if score >= 76:
         return "پرونده اولیه قوی", "🟢"
+
     if score >= 58:
         return "قابل اقدام، با نیاز به بهینه‌سازی", "🟡"
+
     if score >= 40:
         return "ریسک متوسط رو به بالا", "🟠"
+
     return "فعلاً پرریسک", "🔴"
 
 
@@ -485,162 +641,326 @@ def factor_text(data, strongest=True):
         FUNDS: "تمکن مالی",
         REFUSAL: "سابقه ویزا",
     }
-    ranked = []
-    for state, key in STATE_KEYS.items():
-        answer = data.get(key, "")
-        ranked.append((SCORES[state].get(answer, 0), state, answer))
 
-    ranked.sort(key=lambda x: x[0], reverse=strongest)
-    _, state, answer = ranked[0]
-    return f"{labels[state]}: {answer}"
+    ranked_items = []
+
+    for state, data_key in STATE_KEYS.items():
+        selected_answer = data.get(data_key, "")
+        selected_score = SCORES[state].get(
+            selected_answer,
+            0,
+        )
+
+        ranked_items.append(
+            (
+                selected_score,
+                state,
+                selected_answer,
+            )
+        )
+
+    ranked_items.sort(
+        key=lambda item: item[0],
+        reverse=strongest,
+    )
+
+    _, state, selected_answer = ranked_items[0]
+
+    return (
+        f"{labels[state]}: "
+        f"{selected_answer}"
+    )
 
 
 def improvement_tip(data):
     if data.get("language_test") == "هنوز مدرک زبان ندارم":
-        return "اولویت نخست شما، انتخاب آزمون زبان متناسب با کشور و دانشگاه هدف است."
+        return (
+            "اولویت نخست شما، انتخاب آزمون زبان متناسب "
+            "با کشور و دانشگاه هدف است."
+        )
 
     if data.get("language_level") in {
         "بدون نمره یا مدرک",
         "در حال آماده‌سازی",
         "نمره دارم ولی احتمالاً نیاز به بهبود دارد",
     }:
-        return "تقویت نمره زبان می‌تواند گزینه‌های دانشگاهی و کیفیت پرونده را بهتر کند."
+        return (
+            "تقویت نمره زبان می‌تواند گزینه‌های دانشگاهی "
+            "و کیفیت پرونده را بهتر کند."
+        )
 
-    if data.get("funds") in {"فعلاً آماده نیست", "نیازمند تکمیل"}:
-        return "تمکن مالی باید قبل از اقدام، مستند و قابل دفاع شود."
+    if data.get("funds") in {
+        "فعلاً آماده نیست",
+        "نیازمند تکمیل",
+    }:
+        return (
+            "تمکن مالی باید قبل از اقدام، "
+            "مستند و قابل دفاع شود."
+        )
 
-    if data.get("gap") in {"۵ تا ۷ سال", "بیشتر از ۷ سال"}:
-        return "برای فاصله تحصیلی باید توضیح منطقی و مستند آماده شود."
+    if data.get("gap") in {
+        "۵ تا ۷ سال",
+        "بیشتر از ۷ سال",
+    }:
+        return (
+            "برای فاصله تحصیلی باید توضیح منطقی "
+            "و مستند آماده شود."
+        )
 
     if data.get("work_experience") in {
         "سابقه کار غیرمرتبط",
         "سابقه کار ندارم",
     }:
-        return "ساختن ارتباط روشن بین رشته، سوابق و هدف تحصیلی برای شما اهمیت زیادی دارد."
+        return (
+            "ساختن ارتباط روشن بین رشته، سوابق و هدف تحصیلی "
+            "برای شما اهمیت زیادی دارد."
+        )
 
     if data.get("refusal") != "خیر":
-        return "پرونده ریجکتی قبلی باید قبل از اقدام جدید دقیق بررسی شود."
+        return (
+            "پرونده ریجکتی قبلی باید قبل از اقدام جدید "
+            "دقیق بررسی شود."
+        )
 
-    return "مهم‌ترین فرصت شما، انتخاب درست کشور و دانشگاه متناسب با رشته و رزومه است."
+    return (
+        "مهم‌ترین فرصت شما، انتخاب درست کشور و دانشگاه "
+        "متناسب با رشته و رزومه است."
+    )
 
 
 async def show_question(query, state):
     await query.edit_message_text(
         question_message(state),
-        reply_markup=keyboard_for(state),
+        reply_markup=question_keyboard(state),
     )
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     user = update.effective_user
     referred_by = None
 
     if context.args and context.args[0].startswith("ref_"):
-        raw = context.args[0].replace("ref_", "", 1)
-        if raw.isdigit():
-            referred_by = int(raw)
+        raw_referrer = context.args[0].replace(
+            "ref_",
+            "",
+            1,
+        )
 
-    upsert_user(user, referred_by)
-    record_event(user.id, "start")
+        if raw_referrer.isdigit():
+            referred_by = int(raw_referrer)
+
+    upsert_start_user(
+        user,
+        referred_by,
+    )
+
+    record_event(
+        user.id,
+        "start",
+    )
+
     context.user_data.clear()
 
     text = (
         f"سلام {user.first_name or ''} 👋\n\n"
         "🎓 <b>Visa DNA | ارزیابی اولیه پرونده تحصیلی</b>\n\n"
-        "در کمتر از دو دقیقه، شرایط اولیه شما بررسی می‌شود و در پایان می‌بینید:\n\n"
+        "در کمتر از دو دقیقه، شرایط اولیه شما بررسی می‌شود "
+        "و در پایان می‌بینید:\n\n"
         "• امتیاز کلی پرونده\n"
         "• مناسب‌ترین کشورهای پیشنهادی\n"
+        "• اثر رشته و مدرک زبان بر شرایط شما\n"
         "• مهم‌ترین نقطه قوت و ضعف\n"
         "• یک پیشنهاد عملی برای بهبود شرایط\n\n"
-        "📢 برای دریافت نکات، اخبار و فرصت‌های تحصیلی، کانال رسمی آوا را هم دنبال کنید.\n\n"
-        "⚠️ این نتیجه ارزیابی مقدماتی است و تضمین پذیرش یا صدور ویزا نیست."
+        "🎁 با معرفی ۳ نفر که تست را کامل کنند، "
+        "یک جلسه حضوری ۴۵ دقیقه‌ای همراه با تحلیل رایگان "
+        "وضعیت مهاجرتی دریافت می‌کنید.\n\n"
+        "📢 برای دریافت نکات و فرصت‌های تحصیلی، "
+        "کانال رسمی آوا را دنبال کنید.\n\n"
+        "⚠️ این نتیجه ارزیابی مقدماتی است و "
+        "تضمین پذیرش یا صدور ویزا نیست."
     )
 
-    markup = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("شروع ارزیابی رایگان", callback_data="begin")]]
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "شروع ارزیابی رایگان",
+                    callback_data="begin",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "عضویت در کانال رسمی آوا",
+                    url=CHANNEL_URL,
+                )
+            ],
+        ]
     )
 
-    await update.message.reply_text(
-        text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=markup,
-    )
+    if update.message:
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+
     return AGE
 
 
-async def begin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def begin(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     query = update.callback_query
     await query.answer()
-    record_event(update.effective_user.id, "begin")
-    await show_question(query, AGE)
+
+    record_event(
+        update.effective_user.id,
+        "begin",
+    )
+
+    await show_question(
+        query,
+        AGE,
+    )
+
     return AGE
 
 
-async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def answer_question(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     query = update.callback_query
     await query.answer()
 
     try:
-        _, prefix, raw_index = query.data.split("|", 2)
+        _, prefix, raw_index = query.data.split(
+            "|",
+            2,
+        )
+
         state = PREFIX_TO_STATE[prefix]
-        index = int(raw_index)
-        selected = QUESTIONS[state][1][index]
-    except (ValueError, KeyError, IndexError, AttributeError):
+        option_index = int(raw_index)
+        _, options = QUESTIONS[state]
+        selected_answer = options[option_index]
+
+    except (
+        ValueError,
+        KeyError,
+        IndexError,
+        AttributeError,
+    ):
         await query.edit_message_text(
             "انتخاب نامعتبر بود. لطفاً دوباره /start را بزنید."
         )
         return ConversationHandler.END
 
-    context.user_data[STATE_KEYS[state]] = selected
-    record_event(update.effective_user.id, f"answer_{prefix}")
+    data_key = STATE_KEYS[state]
+    context.user_data[data_key] = selected_answer
 
-    current = STATES.index(state)
-    if current == len(STATES) - 1:
-        phone_markup = ReplyKeyboardMarkup(
-            [[KeyboardButton("ارسال شماره تماس", request_contact=True)]],
+    record_event(
+        update.effective_user.id,
+        f"answer_{prefix}",
+    )
+
+    current_index = QUESTION_STATES.index(state)
+
+    if current_index == len(QUESTION_STATES) - 1:
+        phone_keyboard = ReplyKeyboardMarkup(
+            [
+                [
+                    KeyboardButton(
+                        "ارسال شماره تماس",
+                        request_contact=True,
+                    )
+                ]
+            ],
             resize_keyboard=True,
             one_time_keyboard=True,
         )
 
         await query.edit_message_text(
             "ارزیابی شما آماده است ✅\n\n"
-            "برای نمایش نتیجه کامل و ثبت درخواست بررسی تخصصی، شماره تماس خود را ارسال کنید.\n\n"
+            "برای نمایش نتیجه کامل و ثبت درخواست بررسی تخصصی، "
+            "شماره تماس خود را ارسال کنید.\n\n"
             "شماره فقط برای پیگیری همین درخواست استفاده می‌شود."
         )
+
         await query.message.reply_text(
             "روی دکمه زیر بزنید یا شماره را دستی وارد کنید:",
-            reply_markup=phone_markup,
+            reply_markup=phone_keyboard,
         )
+
         return PHONE
 
-    next_state = STATES[current + 1]
-    await show_question(query, next_state)
+    next_state = QUESTION_STATES[
+        current_index + 1
+    ]
+
+    await show_question(
+        query,
+        next_state,
+    )
+
     return next_state
 
 
-async def back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def back_question(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     query = update.callback_query
     await query.answer()
 
     try:
-        _, prefix = query.data.split("|", 1)
-        state = PREFIX_TO_STATE[prefix]
-        index = STATES.index(state)
-    except (ValueError, KeyError):
+        _, prefix = query.data.split(
+            "|",
+            1,
+        )
+
+        current_state = PREFIX_TO_STATE[prefix]
+        current_index = QUESTION_STATES.index(
+            current_state
+        )
+
+    except (
+        ValueError,
+        KeyError,
+    ):
         return ConversationHandler.END
 
-    previous = STATES[max(0, index - 1)]
-    await show_question(query, previous)
-    return previous
+    previous_state = QUESTION_STATES[
+        max(
+            0,
+            current_index - 1,
+        )
+    ]
+
+    await show_question(
+        query,
+        previous_state,
+    )
+
+    return previous_state
 
 
-async def phone_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def phone_answer(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     if update.message.contact:
         phone = update.message.contact.phone_number
     else:
-        phone = (update.message.text or "").strip()
+        phone = (
+            update.message.text
+            or ""
+        ).strip()
 
-    cleaned = (
+    cleaned_phone = (
         phone.replace(" ", "")
         .replace("-", "")
         .replace("(", "")
@@ -648,7 +968,10 @@ async def phone_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         .replace("+", "")
     )
 
-    if len(cleaned) < 8 or not cleaned.isdigit():
+    if (
+        len(cleaned_phone) < 8
+        or not cleaned_phone.isdigit()
+    ):
         await update.message.reply_text(
             "شماره واردشده معتبر نیست. دوباره ارسال کنید."
         )
@@ -656,54 +979,80 @@ async def phone_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["phone"] = phone
 
-    total_score = base_score(context.user_data)
-    ranked_countries = country_scores(context.user_data)
-    best = ranked_countries[0]
-    level, icon = score_level(total_score)
-    percentile = max(25, min(95, total_score + 8))
+    overall_score = calculate_base_score(
+        context.user_data
+    )
+
+    country_scores = calculate_country_scores(
+        context.user_data
+    )
+
+    best_country = country_scores[0]
+
+    result_level, icon = score_level(
+        overall_score
+    )
 
     save_result(
         update.effective_user,
         context.user_data,
-        total_score,
-        best["name"],
-        best["score"],
-        level,
+        overall_score,
+        best_country["name"],
+        best_country["score"],
+        result_level,
     )
-    record_event(update.effective_user.id, "completed")
 
-    bot = await context.bot.get_me()
+    record_event(
+        update.effective_user.id,
+        "completed",
+    )
+
+    bot_info = await context.bot.get_me()
+
     referral_link = (
-        f"https://t.me/{bot.username}?start=ref_{update.effective_user.id}"
+        f"https://t.me/{bot_info.username}"
+        f"?start=ref_{update.effective_user.id}"
     )
 
-    top_three = "\n".join(
-        f"{i + 1}. {item['flag']} <b>{item['name']}</b> — {item['score']}/100"
-        for i, item in enumerate(ranked_countries[:3])
+    top_three_countries = "\n".join(
+        (
+            f"{index + 1}. "
+            f"{item['flag']} "
+            f"<b>{item['name']}</b> — "
+            f"{item['score']}/100"
+        )
+        for index, item in enumerate(
+            country_scores[:3]
+        )
     )
 
     result_text = (
         f"{icon} <b>Visa DNA Report</b>\n\n"
-        f"📊 امتیاز کلی: <b>{total_score}/100</b>\n"
-        f"📌 وضعیت: <b>{level}</b>\n"
-        f"🏅 بهتر از حدود <b>{percentile}٪</b> کاربران اولیه\n\n"
-        f"<b>سه مقصد مناسب‌تر برای شرایط فعلی شما:</b>\n"
-        f"{top_three}\n\n"
-        f"✅ <b>نقطه قوت اصلی:</b>\n{factor_text(context.user_data, True)}\n\n"
-        f"⚠️ <b>مهم‌ترین نقطه قابل بهبود:</b>\n"
+        f"📊 امتیاز کلی: <b>{overall_score}/100</b>\n"
+        f"📌 وضعیت: <b>{result_level}</b>\n\n"
+        "<b>سه مقصد مناسب‌تر برای شرایط فعلی شما:</b>\n"
+        f"{top_three_countries}\n\n"
+        "✅ <b>نقطه قوت اصلی:</b>\n"
+        f"{factor_text(context.user_data, True)}\n\n"
+        "⚠️ <b>مهم‌ترین نقطه قابل بهبود:</b>\n"
         f"{factor_text(context.user_data, False)}\n\n"
-        f"💡 <b>پیشنهاد عملی:</b>\n{improvement_tip(context.user_data)}\n\n"
+        "💡 <b>پیشنهاد عملی:</b>\n"
+        f"{improvement_tip(context.user_data)}\n\n"
         "🎁 <b>هدیه معرفی دوستان:</b>\n"
-        "اگر ۳ نفر از طریق لینک اختصاصی شما وارد ربات شوند و ارزیابی را کامل کنند، "
-        "یک جلسه مشاوره حضوری ۴۵ دقیقه‌ای همراه با تحلیل رایگان وضعیت مهاجرتی دریافت می‌کنید.\n\n"
-        "📢 برای دریافت نکات کاربردی، فرصت‌ها و به‌روزرسانی‌های تحصیلی، "
+        "اگر ۳ نفر از طریق لینک اختصاصی شما وارد ربات شوند "
+        "و ارزیابی را کامل کنند، یک جلسه مشاوره حضوری "
+        "۴۵ دقیقه‌ای همراه با تحلیل رایگان وضعیت مهاجرتی "
+        "دریافت می‌کنید.\n\n"
+        "📢 برای دریافت نکات کاربردی و فرصت‌های تحصیلی، "
         "کانال رسمی آوا را دنبال کنید.\n\n"
-        "این گزارش یک غربالگری مقدماتی است و جایگزین بررسی تخصصی مدارک نیست."
+        "این گزارش یک غربالگری مقدماتی است و "
+        "جایگزین بررسی تخصصی مدارک نیست."
     )
 
     share_text = (
-        "🎯 من Visa DNA خودم را گرفتم و مناسب‌ترین مقصدهای تحصیلی‌ام مشخص شد.\n"
-        "تو هم در کمتر از دو دقیقه تست رایگان را انجام بده 👇"
+        "🎯 این تست رایگان، شرایط اولیه پرونده تحصیلی را "
+        "در کمتر از دو دقیقه بررسی می‌کند.\n"
+        "تو هم امتحان کن 👇"
     )
 
     share_url = (
@@ -712,21 +1061,47 @@ async def phone_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"&text={quote(share_text, safe='')}"
     )
 
-    markup = InlineKeyboardMarkup(
+    result_keyboard = InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("درخواست بررسی تخصصی", url=CONSULTATION_URL)],
-            [InlineKeyboardButton("عضویت در کانال رسمی آوا", url=CHANNEL_URL)],
-            [InlineKeyboardButton("دعوت دوستان و دریافت هدیه", url=share_url)],
-            [InlineKeyboardButton("پیگیری هدیه معرفی‌ها", callback_data="my_referrals")],
-            [InlineKeyboardButton("ارزیابی مجدد", callback_data="restart")],
+            [
+                InlineKeyboardButton(
+                    "درخواست مشاوره اختصاصی",
+                    url=CONSULTATION_URL,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "عضویت در کانال رسمی آوا",
+                    url=CHANNEL_URL,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "دعوت دوستان و دریافت هدیه",
+                    url=share_url,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "پیگیری هدیه معرفی‌ها",
+                    callback_data="my_referrals",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "ارزیابی مجدد",
+                    callback_data="restart",
+                )
+            ],
         ]
     )
 
     await update.message.reply_text(
         result_text,
         parse_mode=ParseMode.HTML,
-        reply_markup=markup,
+        reply_markup=result_keyboard,
     )
+
     await update.message.reply_text(
         "ارزیابی تمام شد.",
         reply_markup=ReplyKeyboardRemove(),
@@ -735,8 +1110,8 @@ async def phone_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for admin_id in ADMIN_IDS:
         try:
             await context.bot.send_message(
-                admin_id,
-                (
+                chat_id=admin_id,
+                text=(
                     "📥 لید جدید\n\n"
                     f"نام: {update.effective_user.full_name}\n"
                     f"یوزرنیم: @{update.effective_user.username or '-'}\n"
@@ -744,48 +1119,64 @@ async def phone_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"رشته: {context.user_data.get('field', '-')}\n"
                     f"مدرک زبان: {context.user_data.get('language_test', '-')}\n"
                     f"وضعیت زبان: {context.user_data.get('language_level', '-')}\n"
-                    f"امتیاز کلی: {total_score}\n"
-                    f"مقصد پیشنهادی اول: {best['name']}\n"
-                    f"امتیاز مقصد اول: {best['score']}\n"
-                    f"وضعیت: {level}"
+                    f"سابقه کار: {context.user_data.get('work_experience', '-')}\n"
+                    f"امتیاز کلی: {overall_score}\n"
+                    f"مقصد پیشنهادی اول: {best_country['name']}\n"
+                    f"امتیاز مقصد اول: {best_country['score']}\n"
+                    f"وضعیت: {result_level}"
                 ),
             )
+
         except Exception:
-            logging.exception("Could not notify admin %s", admin_id)
+            logging.exception(
+                "Could not notify admin %s",
+                admin_id,
+            )
 
     return ConversationHandler.END
 
 
-async def referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def referrals_status(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     query = update.callback_query
     await query.answer()
+
     user_id = update.effective_user.id
 
-    with db_connect() as conn:
-        invited = conn.execute(
-            "SELECT COUNT(*) AS c FROM leads WHERE referred_by = ?",
-            (user_id,),
-        ).fetchone()["c"]
-
-        completed = conn.execute(
+    with db_connect() as connection:
+        invited_count = connection.execute(
             """
-            SELECT COUNT(*) AS c
+            SELECT COUNT(*) AS count
+            FROM leads
+            WHERE referred_by = ?
+            """,
+            (user_id,),
+        ).fetchone()["count"]
+
+        completed_count = connection.execute(
+            """
+            SELECT COUNT(*) AS count
             FROM leads
             WHERE referred_by = ?
               AND phone IS NOT NULL
               AND phone != ''
             """,
             (user_id,),
-        ).fetchone()["c"]
+        ).fetchone()["count"]
 
     bot_info = await context.bot.get_me()
+
     referral_link = (
-        f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+        f"https://t.me/{bot_info.username}"
+        f"?start=ref_{user_id}"
     )
 
     share_text = (
         "🎯 این تست رایگان، شرایط اولیه پرونده تحصیلی را "
-        "در کمتر از دو دقیقه بررسی می‌کند. تو هم امتحان کن 👇"
+        "در کمتر از دو دقیقه بررسی می‌کند.\n"
+        "تو هم امتحان کن 👇"
     )
 
     share_url = (
@@ -794,29 +1185,51 @@ async def referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"&text={quote(share_text, safe='')}"
     )
 
-    remaining = max(0, 3 - completed)
+    remaining_count = max(
+        0,
+        3 - completed_count,
+    )
 
-    if remaining == 0:
+    if remaining_count == 0:
         reward_status = (
-            "🎉 <b>شرط هدیه شما تکمیل شده است.</b>\n\n"
-            "شما واجد دریافت یک جلسه مشاوره حضوری ۴۵ دقیقه‌ای "
-            "همراه با تحلیل رایگان وضعیت مهاجرتی هستید. "
-            "برای هماهنگی، روی دکمه «دریافت جلسه رایگان» بزنید."
+            "🎉 <b>شرط دریافت هدیه تکمیل شده است.</b>\n\n"
+            "شما واجد دریافت یک جلسه مشاوره حضوری "
+            "۴۵ دقیقه‌ای همراه با تحلیل رایگان وضعیت مهاجرتی هستید.\n\n"
+            "برای ثبت درخواست، روی دکمه زیر بزنید."
         )
-        consultation_button_text = "دریافت جلسه رایگان"
+
+        consultation_button_text = (
+            "ثبت جلسه رایگان"
+        )
+
     else:
         reward_status = (
-            "🎁 با تکمیل ارزیابی توسط <b>۳ نفر</b> از دوستانتان، "
-            "یک جلسه مشاوره حضوری ۴۵ دقیقه‌ای همراه با تحلیل رایگان "
-            "وضعیت مهاجرتی دریافت می‌کنید.\n\n"
-            f"تا فعال‌شدن هدیه: <b>{remaining} معرفی موفق دیگر</b>"
+            "🎁 با تکمیل ارزیابی توسط <b>۳ نفر</b> "
+            "از دوستانتان، یک جلسه مشاوره حضوری "
+            "۴۵ دقیقه‌ای همراه با تحلیل رایگان وضعیت مهاجرتی "
+            "دریافت می‌کنید.\n\n"
+            f"تا فعال‌شدن هدیه: "
+            f"<b>{remaining_count} معرفی موفق دیگر</b>"
         )
-        consultation_button_text = "شرایط مشاوره تخصصی"
 
-    markup = InlineKeyboardMarkup(
+        consultation_button_text = (
+            "درخواست مشاوره اختصاصی"
+        )
+
+    keyboard = InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("ارسال تست برای یک دوست", url=share_url)],
-            [InlineKeyboardButton("عضویت در کانال رسمی آوا", url=CHANNEL_URL)],
+            [
+                InlineKeyboardButton(
+                    "ارسال تست برای یک دوست",
+                    url=share_url,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "عضویت در کانال رسمی آوا",
+                    url=CHANNEL_URL,
+                )
+            ],
             [
                 InlineKeyboardButton(
                     consultation_button_text,
@@ -828,119 +1241,196 @@ async def referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.message.reply_text(
         "👥 <b>آمار معرفی شما</b>\n\n"
-        f"ورودی از لینک شما: <b>{invited}</b>\n"
-        f"ارزیابی کامل‌شده: <b>{completed}</b>\n\n"
-        f"{reward_status}\n\n"
-        "📢 برای دریافت نکات و فرصت‌های جدید، کانال رسمی آوا را هم دنبال کنید.",
+        f"ورودی از لینک شما: <b>{invited_count}</b>\n"
+        f"ارزیابی کامل‌شده: <b>{completed_count}</b>\n\n"
+        f"{reward_status}",
         parse_mode=ParseMode.HTML,
-        reply_markup=markup,
+        reply_markup=keyboard,
     )
 
 
-async def restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def restart(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     query = update.callback_query
     await query.answer()
+
     context.user_data.clear()
-    await show_question(query, AGE)
+
+    await show_question(
+        query,
+        AGE,
+    )
+
     return AGE
 
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     context.user_data.clear()
+
     await update.message.reply_text(
         "ارزیابی لغو شد. برای شروع دوباره /start را بزنید.",
         reply_markup=ReplyKeyboardRemove(),
     )
+
     return ConversationHandler.END
 
 
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stats(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     if update.effective_user.id not in ADMIN_IDS:
         return
 
     today = datetime.now(timezone.utc).date().isoformat()
 
-    with db_connect() as conn:
-        total = conn.execute(
-            "SELECT COUNT(*) AS c FROM leads WHERE phone IS NOT NULL AND phone != ''"
-        ).fetchone()["c"]
-        today_total = conn.execute(
+    with db_connect() as connection:
+        total_leads = connection.execute(
             """
-            SELECT COUNT(*) AS c
+            SELECT COUNT(*) AS count
+            FROM leads
+            WHERE phone IS NOT NULL
+              AND phone != ''
+            """
+        ).fetchone()["count"]
+
+        today_leads = connection.execute(
+            """
+            SELECT COUNT(*) AS count
             FROM leads
             WHERE phone IS NOT NULL
               AND phone != ''
               AND substr(updated_at, 1, 10) = ?
             """,
             (today,),
-        ).fetchone()["c"]
-        starts = conn.execute(
-            "SELECT COUNT(*) AS c FROM events WHERE event_name = 'start'"
-        ).fetchone()["c"]
-        completed = conn.execute(
-            "SELECT COUNT(*) AS c FROM events WHERE event_name = 'completed'"
-        ).fetchone()["c"]
-        referred = conn.execute(
-            "SELECT COUNT(*) AS c FROM leads WHERE referred_by IS NOT NULL"
-        ).fetchone()["c"]
+        ).fetchone()["count"]
 
-    rate = round(completed / starts * 100, 1) if starts else 0
+        starts = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM events
+            WHERE event_name = 'start'
+            """
+        ).fetchone()["count"]
+
+        completed = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM events
+            WHERE event_name = 'completed'
+            """
+        ).fetchone()["count"]
+
+        referred = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM leads
+            WHERE referred_by IS NOT NULL
+            """
+        ).fetchone()["count"]
+
+    completion_rate = (
+        round(
+            completed / starts * 100,
+            1,
+        )
+        if starts
+        else 0
+    )
 
     await update.message.reply_text(
         "📊 آمار ربات\n\n"
-        f"کل لیدها: {total}\n"
-        f"لیدهای امروز: {today_total}\n"
+        f"کل لیدها: {total_leads}\n"
+        f"لیدهای امروز: {today_leads}\n"
         f"شروع ارزیابی: {starts}\n"
         f"تکمیل ارزیابی: {completed}\n"
-        f"نرخ تکمیل: {rate}%\n"
+        f"نرخ تکمیل: {completion_rate}%\n"
         f"ورودی از معرفی: {referred}"
     )
 
 
-async def export_leads(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def export_leads(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     if update.effective_user.id not in ADMIN_IDS:
         return
 
-    with db_connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM leads ORDER BY updated_at DESC"
+    with db_connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM leads
+            ORDER BY updated_at DESC
+            """
         ).fetchall()
 
     output = io.StringIO()
     writer = csv.writer(output)
 
     if rows:
-        writer.writerow(rows[0].keys())
-        for row in rows:
-            writer.writerow(list(row))
-    else:
-        writer.writerow(["No leads"])
+        writer.writerow(
+            rows[0].keys()
+        )
 
-    file_data = io.BytesIO(output.getvalue().encode("utf-8-sig"))
-    file_data.name = "ava_visa_leads.csv"
+        for row in rows:
+            writer.writerow(
+                list(row)
+            )
+
+    else:
+        writer.writerow(
+            ["No leads"]
+        )
+
+    file_bytes = io.BytesIO(
+        output.getvalue().encode(
+            "utf-8-sig"
+        )
+    )
+
+    file_bytes.name = (
+        "ava_visa_leads.csv"
+    )
 
     await update.message.reply_document(
-        document=file_data,
+        document=file_bytes,
         caption="خروجی لیدهای ربات",
     )
 
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logging.exception("Unhandled error", exc_info=context.error)
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    logging.exception(
+        "Unhandled error",
+        exc_info=context.error,
+    )
 
 
 def main():
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is missing in Railway Variables.")
+        raise RuntimeError(
+            "BOT_TOKEN is missing in Railway Variables."
+        )
 
     logging.basicConfig(
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        format=(
+            "%(asctime)s | %(levelname)s | "
+            "%(name)s | %(message)s"
+        ),
         level=logging.INFO,
     )
 
     init_db()
 
-    app = (
+    application = (
         Application.builder()
         .token(BOT_TOKEN)
         .concurrent_updates(False)
@@ -949,73 +1439,179 @@ def main():
 
     conversation = ConversationHandler(
         entry_points=[
-            CommandHandler("start", start),
-            CallbackQueryHandler(begin, pattern=r"^begin$"),
-            CallbackQueryHandler(restart, pattern=r"^restart$"),
+            CommandHandler(
+                "start",
+                start,
+            ),
+            CallbackQueryHandler(
+                begin,
+                pattern=r"^begin$",
+            ),
+            CallbackQueryHandler(
+                restart,
+                pattern=r"^restart$",
+            ),
         ],
         states={
             AGE: [
-                CallbackQueryHandler(answer, pattern=r"^answer\|age\|"),
-                CallbackQueryHandler(back, pattern=r"^back\|"),
+                CallbackQueryHandler(
+                    answer_question,
+                    pattern=r"^answer\|age\|",
+                ),
+                CallbackQueryHandler(
+                    back_question,
+                    pattern=r"^back\|",
+                ),
             ],
             EDUCATION: [
-                CallbackQueryHandler(answer, pattern=r"^answer\|education\|"),
-                CallbackQueryHandler(back, pattern=r"^back\|"),
+                CallbackQueryHandler(
+                    answer_question,
+                    pattern=r"^answer\|education\|",
+                ),
+                CallbackQueryHandler(
+                    back_question,
+                    pattern=r"^back\|",
+                ),
             ],
             GPA: [
-                CallbackQueryHandler(answer, pattern=r"^answer\|gpa\|"),
-                CallbackQueryHandler(back, pattern=r"^back\|"),
+                CallbackQueryHandler(
+                    answer_question,
+                    pattern=r"^answer\|gpa\|",
+                ),
+                CallbackQueryHandler(
+                    back_question,
+                    pattern=r"^back\|",
+                ),
             ],
             FIELD: [
-                CallbackQueryHandler(answer, pattern=r"^answer\|field\|"),
-                CallbackQueryHandler(back, pattern=r"^back\|"),
+                CallbackQueryHandler(
+                    answer_question,
+                    pattern=r"^answer\|field\|",
+                ),
+                CallbackQueryHandler(
+                    back_question,
+                    pattern=r"^back\|",
+                ),
             ],
             LANGUAGE_TEST: [
-                CallbackQueryHandler(answer, pattern=r"^answer\|language_test\|"),
-                CallbackQueryHandler(back, pattern=r"^back\|"),
+                CallbackQueryHandler(
+                    answer_question,
+                    pattern=r"^answer\|language_test\|",
+                ),
+                CallbackQueryHandler(
+                    back_question,
+                    pattern=r"^back\|",
+                ),
             ],
             LANGUAGE_LEVEL: [
-                CallbackQueryHandler(answer, pattern=r"^answer\|language_level\|"),
-                CallbackQueryHandler(back, pattern=r"^back\|"),
+                CallbackQueryHandler(
+                    answer_question,
+                    pattern=r"^answer\|language_level\|",
+                ),
+                CallbackQueryHandler(
+                    back_question,
+                    pattern=r"^back\|",
+                ),
             ],
             GAP: [
-                CallbackQueryHandler(answer, pattern=r"^answer\|gap\|"),
-                CallbackQueryHandler(back, pattern=r"^back\|"),
+                CallbackQueryHandler(
+                    answer_question,
+                    pattern=r"^answer\|gap\|",
+                ),
+                CallbackQueryHandler(
+                    back_question,
+                    pattern=r"^back\|",
+                ),
             ],
             WORK_EXPERIENCE: [
-                CallbackQueryHandler(answer, pattern=r"^answer\|work_experience\|"),
-                CallbackQueryHandler(back, pattern=r"^back\|"),
+                CallbackQueryHandler(
+                    answer_question,
+                    pattern=r"^answer\|work_experience\|",
+                ),
+                CallbackQueryHandler(
+                    back_question,
+                    pattern=r"^back\|",
+                ),
             ],
             FUNDS: [
-                CallbackQueryHandler(answer, pattern=r"^answer\|funds\|"),
-                CallbackQueryHandler(back, pattern=r"^back\|"),
+                CallbackQueryHandler(
+                    answer_question,
+                    pattern=r"^answer\|funds\|",
+                ),
+                CallbackQueryHandler(
+                    back_question,
+                    pattern=r"^back\|",
+                ),
             ],
             REFUSAL: [
-                CallbackQueryHandler(answer, pattern=r"^answer\|refusal\|"),
-                CallbackQueryHandler(back, pattern=r"^back\|"),
+                CallbackQueryHandler(
+                    answer_question,
+                    pattern=r"^answer\|refusal\|",
+                ),
+                CallbackQueryHandler(
+                    back_question,
+                    pattern=r"^back\|",
+                ),
             ],
             PHONE: [
-                MessageHandler(filters.CONTACT, phone_answer),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, phone_answer),
+                MessageHandler(
+                    filters.CONTACT,
+                    phone_answer,
+                ),
+                MessageHandler(
+                    filters.TEXT
+                    & ~filters.COMMAND,
+                    phone_answer,
+                ),
             ],
         },
         fallbacks=[
-            CommandHandler("cancel", cancel),
-            CommandHandler("start", start),
+            CommandHandler(
+                "cancel",
+                cancel,
+            ),
+            CommandHandler(
+                "start",
+                start,
+            ),
         ],
         allow_reentry=True,
     )
 
-    app.add_handler(conversation)
-    app.add_handler(
-        CallbackQueryHandler(referrals, pattern=r"^my_referrals$")
+    application.add_handler(
+        conversation
     )
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("export", export_leads))
-    app.add_error_handler(error_handler)
+
+    application.add_handler(
+        CallbackQueryHandler(
+            referrals_status,
+            pattern=r"^my_referrals$",
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "stats",
+            stats,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "export",
+            export_leads,
+        )
+    )
+
+    application.add_error_handler(
+        error_handler
+    )
 
     print("Bot is running...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES
+    )
 
 
 if __name__ == "__main__":
