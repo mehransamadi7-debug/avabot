@@ -3,7 +3,7 @@ import io
 import logging
 import os
 import sqlite3
-import from urllib.parse import urlencode
+from urllib.parse import urlencode
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -64,7 +64,6 @@ DESTINATIONS = {
 }
 
 QUESTIONS = {
-QUESTIONS = {
     AGE: (
         "سن فعلی شما چند سال است؟",
         ["زیر ۲۴", "۲۴ تا ۲۹", "۳۰ تا ۳۴", "۳۵ تا ۳۹", "۴۰ سال به بالا"],
@@ -104,11 +103,6 @@ QUESTIONS = {
         "آیا سابقه ریجکتی ویزا دارید؟",
         ["خیر", "بله، یک بار", "بله، بیش از یک بار"],
     ),
-} 
-    LANGUAGE: ("وضعیت مدرک زبان؟", ["مدرک معتبر با نمره خوب +ب2", "مدرک با نمره متوسط ب1", "در حال آماده‌سازی", "بدون مدرک زبان"]),
-    GAP: ("فاصله تحصیلی یا گپ شما؟", ["کمتر از ۲ سال", "۲ تا ۴ سال", "۵ تا ۷ سال", "بیشتر از ۷ سال"]),
-    FUNDS: ("وضعیت تمکن مالی؟", ["کامل و قابل اثبات", "نسبتاً مناسب", "نیازمند تکمیل", "فعلاً آماده نیست"]),
-    REFUSAL: ("سابقه ریجکتی ویزا دارید؟", ["خیر", "بله، یک بار", "بله، بیش از یک بار"]),
 }
 
 SCORES = {
@@ -299,7 +293,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     upsert_start_user(user, referred_by)
     context.user_data.clear()
 
-  text = (
+text = (
     f"سلام {user.first_name or ''} 👋\n\n"
     "🎓 ارزیابی اولیه پرونده تحصیلی\n\n"
     "با پاسخ به چند سؤال کوتاه، نقاط قوت و ضعف اولیه "
@@ -421,10 +415,16 @@ async def phone_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"این امتیاز بر پایه پاسخ‌های شماست و تصمیم سفارت، پذیرش دانشگاه، "
         f"کیفیت مدارک و توضیح منطقی پرونده را جایگزین نمی‌کند.\n\n"
         f"برای تحلیل دقیق، پرونده باید توسط کارشناس بررسی شود."
-    )
-    share_text = (
+share_text = (
     "🎯 من ارزیابی اولیه پرونده تحصیلی‌ام را انجام دادم.\n"
     "تو هم در کمتر از دو دقیقه نتیجه‌ات را ببین 👇"
+)
+
+share_url = "https://t.me/share/url?" + urlencode(
+    {
+        "url": referral_link,
+        "text": share_text,
+    }
 )
 
 share_url = "https://t.me/share/url?" + urlencode(
