@@ -39,6 +39,7 @@ CONSULTATION_URL = os.getenv(
     "CONSULTATION_URL", "https://t.me/visadesk_consult"
 ).strip()
 DB_PATH = os.getenv("DB_PATH", "data/leads.db").strip()
+CHANNEL_URL = os.getenv("CHANNEL_URL", "https://t.me/avamohajerat").strip()
 
 AGE, EDUCATION, GPA, LANGUAGE, GAP, FUNDS, REFUSAL, PHONE = range(8)
 
@@ -429,6 +430,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• مناسب‌ترین کشورهای پیشنهادی\n"
         "• مهم‌ترین نقطه قوت و ضعف\n"
         "• یک پیشنهاد عملی برای بهبود شرایط\n\n"
+        "📢 برای دریافت نکات، اخبار و فرصت‌های تحصیلی، کانال رسمی آوا را هم دنبال کنید.\n\n"
         "⚠️ این نتیجه ارزیابی مقدماتی است و تضمین پذیرش یا صدور ویزا نیست."
     )
 
@@ -569,6 +571,11 @@ async def phone_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚠️ <b>مهم‌ترین نقطه قابل بهبود:</b>\n"
         f"{factor_text(context.user_data, False)}\n\n"
         f"💡 <b>پیشنهاد عملی:</b>\n{improvement_tip(context.user_data)}\n\n"
+        "🎁 <b>هدیه معرفی دوستان:</b>\n"
+        "اگر ۳ نفر از طریق لینک اختصاصی شما وارد ربات شوند و ارزیابی را کامل کنند، "
+        "یک جلسه مشاوره حضوری ۴۵ دقیقه‌ای همراه با تحلیل رایگان وضعیت مهاجرتی دریافت می‌کنید.\n\n"
+        "📢 برای دریافت نکات کاربردی، فرصت‌ها و به‌روزرسانی‌های تحصیلی، "
+        "کانال رسمی آوا را دنبال کنید.\n\n"
         "این گزارش یک غربالگری مقدماتی است و جایگزین بررسی تخصصی مدارک نیست."
     )
 
@@ -586,8 +593,9 @@ async def phone_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     markup = InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("درخواست بررسی تخصصی", url=CONSULTATION_URL)],
-            [InlineKeyboardButton("ارسال تست برای یک دوست", url=share_url)],
-            [InlineKeyboardButton("آمار معرفی‌های من", callback_data="my_referrals")],
+            [InlineKeyboardButton("عضویت در کانال رسمی آوا", url=CHANNEL_URL)],
+            [InlineKeyboardButton("دعوت دوستان و دریافت هدیه", url=share_url)],
+            [InlineKeyboardButton("پیگیری هدیه معرفی‌ها", callback_data="my_referrals")],
             [InlineKeyboardButton("ارزیابی مجدد", callback_data="restart")],
         ]
     )
@@ -633,6 +641,7 @@ async def referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "SELECT COUNT(*) AS c FROM leads WHERE referred_by = ?",
             (user_id,),
         ).fetchone()["c"]
+
         completed = conn.execute(
             """
             SELECT COUNT(*) AS c
@@ -644,18 +653,62 @@ async def referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (user_id,),
         ).fetchone()["c"]
 
+    bot_info = await context.bot.get_me()
+    referral_link = (
+        f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+    )
+
+    share_text = (
+        "🎯 این تست رایگان، شرایط اولیه پرونده تحصیلی را "
+        "در کمتر از دو دقیقه بررسی می‌کند. تو هم امتحان کن 👇"
+    )
+
+    share_url = (
+        "https://t.me/share/url"
+        f"?url={quote(referral_link, safe='')}"
+        f"&text={quote(share_text, safe='')}"
+    )
+
     remaining = max(0, 3 - completed)
-    if remaining:
-        reward = f"برای باز شدن تحلیل اختصاصی رایگان، <b>{remaining}</b> تکمیل دیگر لازم است."
+
+    if remaining == 0:
+        reward_status = (
+            "🎉 <b>شرط هدیه شما تکمیل شده است.</b>\n\n"
+            "شما واجد دریافت یک جلسه مشاوره حضوری ۴۵ دقیقه‌ای "
+            "همراه با تحلیل رایگان وضعیت مهاجرتی هستید. "
+            "برای هماهنگی، روی دکمه «دریافت جلسه رایگان» بزنید."
+        )
+        consultation_button_text = "دریافت جلسه رایگان"
     else:
-        reward = "🎁 حداقل سه دعوت موفق ثبت شده است. برای دریافت تحلیل اختصاصی روی بررسی تخصصی بزنید."
+        reward_status = (
+            "🎁 با تکمیل ارزیابی توسط <b>۳ نفر</b> از دوستانتان، "
+            "یک جلسه مشاوره حضوری ۴۵ دقیقه‌ای همراه با تحلیل رایگان "
+            "وضعیت مهاجرتی دریافت می‌کنید.\n\n"
+            f"تا فعال‌شدن هدیه: <b>{remaining} معرفی موفق دیگر</b>"
+        )
+        consultation_button_text = "شرایط مشاوره تخصصی"
+
+    markup = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("ارسال تست برای یک دوست", url=share_url)],
+            [InlineKeyboardButton("عضویت در کانال رسمی آوا", url=CHANNEL_URL)],
+            [
+                InlineKeyboardButton(
+                    consultation_button_text,
+                    url=CONSULTATION_URL,
+                )
+            ],
+        ]
+    )
 
     await query.message.reply_text(
         "👥 <b>آمار معرفی شما</b>\n\n"
         f"ورودی از لینک شما: <b>{invited}</b>\n"
         f"ارزیابی کامل‌شده: <b>{completed}</b>\n\n"
-        f"{reward}",
+        f"{reward_status}\n\n"
+        "📢 برای دریافت نکات و فرصت‌های جدید، کانال رسمی آوا را هم دنبال کنید.",
         parse_mode=ParseMode.HTML,
+        reply_markup=markup,
     )
 
 
