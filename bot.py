@@ -36,14 +36,14 @@ ADMIN_IDS = {
     if x.strip().isdigit()
 }
 CONSULTATION_URL = os.getenv(
-    "CONSULTATION_URL", "https://t.me/visadesk_consult"
+    "CONSULTATION_URL", "https://avamohajerat.com/consult/"
 ).strip()
 DB_PATH = os.getenv("DB_PATH", "data/leads.db").strip()
 CHANNEL_URL = os.getenv("CHANNEL_URL", "https://t.me/avamohajerat").strip()
 
-AGE, EDUCATION, GPA, LANGUAGE, GAP, FUNDS, REFUSAL, PHONE = range(8)
+AGE, EDUCATION, GPA, FIELD, LANGUAGE_TEST, LANGUAGE_LEVEL, GAP, WORK_EXPERIENCE, FUNDS, REFUSAL, PHONE = range(11)
 
-STATES = [AGE, EDUCATION, GPA, LANGUAGE, GAP, FUNDS, REFUSAL]
+STATES = [AGE, EDUCATION, GPA, FIELD, LANGUAGE_TEST, LANGUAGE_LEVEL, GAP, WORK_EXPERIENCE, FUNDS, REFUSAL]
 
 QUESTIONS = {
     AGE: (
@@ -64,18 +64,60 @@ QUESTIONS = {
             "کمتر از ۱۲ — ضعیف",
         ],
     ),
-    LANGUAGE: (
-        "در حال حاضر چه مدرک یا سطح زبانی دارید؟",
+    FIELD: (
+        "رشته یا حوزه تحصیلی آخرین مدرک شما چیست؟",
         [
-            "مدرک معتبر با سطح B2 یا بالاتر",
-            "مدرک معتبر در سطح B1",
+            "مهندسی و فناوری",
+            "کامپیوتر، IT و داده",
+            "مدیریت، اقتصاد و مالی",
+            "علوم پایه",
+            "پزشکی و پیراپزشکی",
+            "علوم انسانی و اجتماعی",
+            "حقوق",
+            "هنر، معماری و طراحی",
+            "سایر",
+        ],
+    ),
+    LANGUAGE_TEST: (
+        "در حال حاضر چه مدرک یا آزمون زبانی دارید؟",
+        [
+            "IELTS Academic",
+            "TOEFL iBT",
+            "PTE Academic",
+            "Duolingo English Test",
+            "LanguageCert",
+            "Oxford ELLT",
+            "آلمانی — Goethe / TestDaF / telc",
+            "فرانسوی — DELF / DALF / TCF",
+            "ایتالیایی — CILS / CELI",
             "در حال آماده‌سازی برای آزمون",
-            "بدون مدرک زبان",
+            "هنوز مدرک زبان ندارم",
+            "سایر",
+        ],
+    ),
+    LANGUAGE_LEVEL: (
+        "وضعیت فعلی نمره یا سطح زبان شما چگونه است؟",
+        [
+            "نمره یا سطح مناسب و قابل ارائه",
+            "نمره دارم ولی احتمالاً نیاز به بهبود دارد",
+            "در انتظار نتیجه آزمون",
+            "در حال آماده‌سازی",
+            "بدون نمره یا مدرک",
         ],
     ),
     GAP: (
         "از پایان آخرین مقطع تحصیلی شما چقدر گذشته است؟",
         ["کمتر از ۲ سال", "۲ تا ۴ سال", "۵ تا ۷ سال", "بیشتر از ۷ سال"],
+    ),
+    WORK_EXPERIENCE: (
+        "سابقه کار مرتبط با رشته یا مسیر تحصیلی دارید؟",
+        [
+            "بیش از ۳ سال سابقه مرتبط",
+            "۱ تا ۳ سال سابقه مرتبط",
+            "کمتر از ۱ سال سابقه مرتبط",
+            "سابقه کار غیرمرتبط",
+            "سابقه کار ندارم",
+        ],
     ),
     FUNDS: (
         "وضعیت تمکن مالی قابل‌اثبات شما چگونه است؟",
@@ -91,8 +133,11 @@ STATE_KEYS = {
     AGE: "age",
     EDUCATION: "education",
     GPA: "gpa",
-    LANGUAGE: "language",
+    FIELD: "field",
+    LANGUAGE_TEST: "language_test",
+    LANGUAGE_LEVEL: "language_level",
     GAP: "gap",
+    WORK_EXPERIENCE: "work_experience",
     FUNDS: "funds",
     REFUSAL: "refusal",
 }
@@ -101,57 +146,94 @@ PREFIXES = {
     AGE: "age",
     EDUCATION: "education",
     GPA: "gpa",
-    LANGUAGE: "language",
+    FIELD: "field",
+    LANGUAGE_TEST: "language_test",
+    LANGUAGE_LEVEL: "language_level",
     GAP: "gap",
+    WORK_EXPERIENCE: "work_experience",
     FUNDS: "funds",
     REFUSAL: "refusal",
 }
+
 PREFIX_TO_STATE = {v: k for k, v in PREFIXES.items()}
 
 SCORES = {
     AGE: {
-        "زیر ۲۴": 14,
-        "۲۴ تا ۲۹": 15,
-        "۳۰ تا ۳۴": 12,
-        "۳۵ تا ۳۹": 8,
+        "زیر ۲۴": 11,
+        "۲۴ تا ۲۹": 12,
+        "۳۰ تا ۳۴": 10,
+        "۳۵ تا ۳۹": 7,
         "۴۰ سال به بالا": 4,
     },
     EDUCATION: {
-        "دیپلم": 8,
-        "کاردانی": 7,
-        "کارشناسی": 12,
-        "کارشناسی ارشد": 13,
-        "دکتری": 11,
+        "دیپلم": 6,
+        "کاردانی": 6,
+        "کارشناسی": 10,
+        "کارشناسی ارشد": 11,
+        "دکتری": 10,
     },
     GPA: {
-        "۱۸ تا ۲۰ — عالی": 15,
-        "۱۶ تا ۱۷.۹۹ — خیلی خوب": 13,
-        "۱۴ تا ۱۵.۹۹ — خوب": 10,
-        "۱۲ تا ۱۳.۹۹ — متوسط": 6,
+        "۱۸ تا ۲۰ — عالی": 12,
+        "۱۶ تا ۱۷.۹۹ — خیلی خوب": 10,
+        "۱۴ تا ۱۵.۹۹ — خوب": 8,
+        "۱۲ تا ۱۳.۹۹ — متوسط": 5,
         "کمتر از ۱۲ — ضعیف": 2,
     },
-    LANGUAGE: {
-        "مدرک معتبر با سطح B2 یا بالاتر": 18,
-        "مدرک معتبر در سطح B1": 13,
-        "در حال آماده‌سازی برای آزمون": 7,
-        "بدون مدرک زبان": 1,
+    FIELD: {
+        "مهندسی و فناوری": 8,
+        "کامپیوتر، IT و داده": 9,
+        "مدیریت، اقتصاد و مالی": 8,
+        "علوم پایه": 8,
+        "پزشکی و پیراپزشکی": 7,
+        "علوم انسانی و اجتماعی": 6,
+        "حقوق": 5,
+        "هنر، معماری و طراحی": 6,
+        "سایر": 5,
+    },
+    LANGUAGE_TEST: {
+        "IELTS Academic": 8,
+        "TOEFL iBT": 8,
+        "PTE Academic": 8,
+        "Duolingo English Test": 6,
+        "LanguageCert": 6,
+        "Oxford ELLT": 6,
+        "آلمانی — Goethe / TestDaF / telc": 8,
+        "فرانسوی — DELF / DALF / TCF": 8,
+        "ایتالیایی — CILS / CELI": 8,
+        "در حال آماده‌سازی برای آزمون": 4,
+        "هنوز مدرک زبان ندارم": 1,
+        "سایر": 4,
+    },
+    LANGUAGE_LEVEL: {
+        "نمره یا سطح مناسب و قابل ارائه": 10,
+        "نمره دارم ولی احتمالاً نیاز به بهبود دارد": 7,
+        "در انتظار نتیجه آزمون": 6,
+        "در حال آماده‌سازی": 4,
+        "بدون نمره یا مدرک": 1,
     },
     GAP: {
-        "کمتر از ۲ سال": 14,
-        "۲ تا ۴ سال": 11,
-        "۵ تا ۷ سال": 7,
+        "کمتر از ۲ سال": 10,
+        "۲ تا ۴ سال": 8,
+        "۵ تا ۷ سال": 5,
         "بیشتر از ۷ سال": 2,
     },
+    WORK_EXPERIENCE: {
+        "بیش از ۳ سال سابقه مرتبط": 9,
+        "۱ تا ۳ سال سابقه مرتبط": 7,
+        "کمتر از ۱ سال سابقه مرتبط": 5,
+        "سابقه کار غیرمرتبط": 3,
+        "سابقه کار ندارم": 1,
+    },
     FUNDS: {
-        "کامل و قابل اثبات": 17,
-        "نسبتاً مناسب": 12,
-        "نیازمند تکمیل": 6,
+        "کامل و قابل اثبات": 10,
+        "نسبتاً مناسب": 7,
+        "نیازمند تکمیل": 4,
         "فعلاً آماده نیست": 0,
     },
     REFUSAL: {
-        "خیر": 7,
-        "بله، یک بار": 3,
-        "بله، بیش از یک بار": 0,
+        "خیر": 8,
+        "بله، یک بار": 4,
+        "بله، بیش از یک بار": 1,
     },
 }
 
@@ -185,8 +267,11 @@ def init_db():
                 age TEXT,
                 education TEXT,
                 gpa TEXT,
-                language TEXT,
+                field TEXT,
+                language_test TEXT,
+                language_level TEXT,
                 study_gap TEXT,
+                work_experience TEXT,
                 funds TEXT,
                 refusal TEXT,
                 overall_score INTEGER,
@@ -199,6 +284,24 @@ def init_db():
             )
             """
         )
+        existing_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(leads)").fetchall()
+        }
+
+        required_columns = {
+            "field": "TEXT",
+            "language_test": "TEXT",
+            "language_level": "TEXT",
+            "work_experience": "TEXT",
+        }
+
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                conn.execute(
+                    f"ALTER TABLE leads ADD COLUMN {column_name} {column_type}"
+                )
+
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS events (
@@ -263,11 +366,11 @@ def save_result(user, data, score, best_country, best_score, level):
             """
             INSERT INTO leads (
                 telegram_id, username, full_name, phone,
-                age, education, gpa, language, study_gap,
-                funds, refusal, overall_score, best_country,
+                age, education, gpa, field, language_test, language_level,
+                study_gap, work_experience, funds, refusal, overall_score, best_country,
                 best_country_score, result_level, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(telegram_id) DO UPDATE SET
                 username=excluded.username,
                 full_name=excluded.full_name,
@@ -275,8 +378,11 @@ def save_result(user, data, score, best_country, best_score, level):
                 age=excluded.age,
                 education=excluded.education,
                 gpa=excluded.gpa,
-                language=excluded.language,
+                field=excluded.field,
+                language_test=excluded.language_test,
+                language_level=excluded.language_level,
                 study_gap=excluded.study_gap,
+                work_experience=excluded.work_experience,
                 funds=excluded.funds,
                 refusal=excluded.refusal,
                 overall_score=excluded.overall_score,
@@ -293,8 +399,11 @@ def save_result(user, data, score, best_country, best_score, level):
                 data.get("age", ""),
                 data.get("education", ""),
                 data.get("gpa", ""),
-                data.get("language", ""),
+                data.get("field", ""),
+                data.get("language_test", ""),
+                data.get("language_level", ""),
                 data.get("gap", ""),
+                data.get("work_experience", ""),
                 data.get("funds", ""),
                 data.get("refusal", ""),
                 score,
@@ -368,8 +477,11 @@ def factor_text(data, strongest=True):
         AGE: "سن",
         EDUCATION: "مقطع تحصیلی",
         GPA: "معدل",
-        LANGUAGE: "وضعیت زبان",
+        FIELD: "رشته تحصیلی",
+        LANGUAGE_TEST: "نوع مدرک زبان",
+        LANGUAGE_LEVEL: "سطح یا نمره زبان",
         GAP: "فاصله تحصیلی",
+        WORK_EXPERIENCE: "سابقه کار مرتبط",
         FUNDS: "تمکن مالی",
         REFUSAL: "سابقه ویزا",
     }
@@ -384,11 +496,15 @@ def factor_text(data, strongest=True):
 
 
 def improvement_tip(data):
-    if data.get("language") in {
-        "بدون مدرک زبان",
-        "در حال آماده‌سازی برای آزمون",
+    if data.get("language_test") == "هنوز مدرک زبان ندارم":
+        return "اولویت نخست شما، انتخاب آزمون زبان متناسب با کشور و دانشگاه هدف است."
+
+    if data.get("language_level") in {
+        "بدون نمره یا مدرک",
+        "در حال آماده‌سازی",
+        "نمره دارم ولی احتمالاً نیاز به بهبود دارد",
     }:
-        return "تکمیل مدرک زبان می‌تواند امتیاز پرونده شما را به‌طور محسوسی افزایش دهد."
+        return "تقویت نمره زبان می‌تواند گزینه‌های دانشگاهی و کیفیت پرونده را بهتر کند."
 
     if data.get("funds") in {"فعلاً آماده نیست", "نیازمند تکمیل"}:
         return "تمکن مالی باید قبل از اقدام، مستند و قابل دفاع شود."
@@ -396,10 +512,16 @@ def improvement_tip(data):
     if data.get("gap") in {"۵ تا ۷ سال", "بیشتر از ۷ سال"}:
         return "برای فاصله تحصیلی باید توضیح منطقی و مستند آماده شود."
 
+    if data.get("work_experience") in {
+        "سابقه کار غیرمرتبط",
+        "سابقه کار ندارم",
+    }:
+        return "ساختن ارتباط روشن بین رشته، سوابق و هدف تحصیلی برای شما اهمیت زیادی دارد."
+
     if data.get("refusal") != "خیر":
         return "پرونده ریجکتی قبلی باید قبل از اقدام جدید دقیق بررسی شود."
 
-    return "مهم‌ترین فرصت شما، انتخاب درست کشور و دانشگاه متناسب با رزومه است."
+    return "مهم‌ترین فرصت شما، انتخاب درست کشور و دانشگاه متناسب با رشته و رزومه است."
 
 
 async def show_question(query, state):
@@ -619,6 +741,9 @@ async def phone_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"نام: {update.effective_user.full_name}\n"
                     f"یوزرنیم: @{update.effective_user.username or '-'}\n"
                     f"شماره: {phone}\n"
+                    f"رشته: {context.user_data.get('field', '-')}\n"
+                    f"مدرک زبان: {context.user_data.get('language_test', '-')}\n"
+                    f"وضعیت زبان: {context.user_data.get('language_level', '-')}\n"
                     f"امتیاز کلی: {total_score}\n"
                     f"مقصد پیشنهادی اول: {best['name']}\n"
                     f"امتیاز مقصد اول: {best['score']}\n"
@@ -841,12 +966,24 @@ def main():
                 CallbackQueryHandler(answer, pattern=r"^answer\|gpa\|"),
                 CallbackQueryHandler(back, pattern=r"^back\|"),
             ],
-            LANGUAGE: [
-                CallbackQueryHandler(answer, pattern=r"^answer\|language\|"),
+            FIELD: [
+                CallbackQueryHandler(answer, pattern=r"^answer\|field\|"),
+                CallbackQueryHandler(back, pattern=r"^back\|"),
+            ],
+            LANGUAGE_TEST: [
+                CallbackQueryHandler(answer, pattern=r"^answer\|language_test\|"),
+                CallbackQueryHandler(back, pattern=r"^back\|"),
+            ],
+            LANGUAGE_LEVEL: [
+                CallbackQueryHandler(answer, pattern=r"^answer\|language_level\|"),
                 CallbackQueryHandler(back, pattern=r"^back\|"),
             ],
             GAP: [
                 CallbackQueryHandler(answer, pattern=r"^answer\|gap\|"),
+                CallbackQueryHandler(back, pattern=r"^back\|"),
+            ],
+            WORK_EXPERIENCE: [
+                CallbackQueryHandler(answer, pattern=r"^answer\|work_experience\|"),
                 CallbackQueryHandler(back, pattern=r"^back\|"),
             ],
             FUNDS: [
